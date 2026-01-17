@@ -3,32 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Live Schedule</title>
   <style>
-    body { margin:0; font-family: Arial, sans-serif; }
-    .top { padding:10px; display:flex; gap:10px; align-items:center; }
-    button { padding:8px 12px; cursor:pointer; }
-    iframe { width:100%; height: calc(100vh - 56px); border:0; }
+    html, body { margin:0; padding:0; height:100%; }
+    .bar{
+      position:fixed; right:12px; top:12px; z-index:10;
+      display:flex; gap:8px;
+    }
+    button{ padding:8px 12px; cursor:pointer; }
+    iframe{ width:100vw; height:100vh; border:0; display:block; }
   </style>
 </head>
 <body>
-  <div class="top">
+  <div class="bar">
     <button onclick="reloadPdf()">Refresh</button>
-    <div style="opacity:.75;font-size:12px">If you just got notified, click Refresh.</div>
   </div>
 
   <iframe id="pdf" allowfullscreen></iframe>
 
   <script>
     const FILE_ID = "1Cyq-b5-BWPrxIANVkLgmyjv2Zkf8uv4B";
-    const BASE = `https://drive.google.com/file/d/1Cyq-b5-BWPrxIANVkLgmyjv2Zkf8uv4B/preview`;
+    const BASE = `https://drive.google.com/file/d/${FILE_ID}/preview`;
+    const iframe = document.getElementById('pdf');
 
     function reloadPdf(){
-      document.getElementById("pdf").src = BASE + "?v=" + Date.now();
+      iframe.src = BASE + "?v=" + Date.now();
     }
-
-    // עדכון עדין (כדי לא להעמיס): כל 5 דקות
-    setInterval(reloadPdf, 5 * 60 * 1000);
 
     reloadPdf();
   </script>
