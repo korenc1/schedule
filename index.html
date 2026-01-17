@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Live Schedule</title>
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; }
+    .top { padding:10px; display:flex; gap:10px; align-items:center; }
+    button { padding:8px 12px; cursor:pointer; }
+    iframe { width:100%; height: calc(100vh - 56px); border:0; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <button onclick="reloadPdf()">Refresh</button>
+    <div style="opacity:.75;font-size:12px">If you just got notified, click Refresh.</div>
+  </div>
+
+  <iframe id="pdf" allowfullscreen></iframe>
+
+  <script>
+    const FILE_ID = "FILE_ID_HERE";
+    const BASE = `https://drive.google.com/file/d/${FILE_ID}/preview`;
+
+    function reloadPdf(){
+      document.getElementById("pdf").src = BASE + "?v=" + Date.now();
+    }
+
+    // עדכון עדין (כדי לא להעמיס): כל 5 דקות
+    setInterval(reloadPdf, 5 * 60 * 1000);
+
+    reloadPdf();
+  </script>
+</body>
+</html>
