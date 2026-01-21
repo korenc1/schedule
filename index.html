@@ -1,6 +1,5 @@
 
 
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -306,7 +305,7 @@
   </style>
 </head>
 
-<body data-generated-at="21/01/2026 22:13:01">
+<body data-generated-at="21/01/2026 22:43:24">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -350,58 +349,75 @@
     let allData = SCHEDULE_DATA || { updatedAt: null, headers: [], rows: [] };
     let globalColWidthsPx = [];
     let globalCardOuterWidthPx = null;
-
     let currentSearch = '';
 
     if (LOGO_DATAURI) logoImg.src = LOGO_DATAURI;
 
+     
+
     
-    let statusIsUpdating = null; 
-    let statusPublishedAt = '';  
-    let reloadInFlight = false;
+    const STATUS_CACHE_KEY = 'crown_sched_status_cache_v2';
+    const CACHE_TTL_UPDATING_MS = 10 * 60 * 1000; 
+    const CACHE_TTL_NORMAL_MS   = 2 * 60 * 1000;
 
-    const SNAPSHOT_KEY = 'crown_schedule_snapshot_v1';
+    
+    
+    
+    const POLL_NORMAL_MS = 1000;
+    const POLL_FAST_MS   = 800;
 
-    function loadSnapshot_(){
-      try{
-        const raw = localStorage.getItem(SNAPSHOT_KEY);
-        if(!raw) return null;
-        const parsed = JSON.parse(raw);
-        if(parsed && parsed.data && parsed.data.headers && parsed.data.rows) return parsed.data;
-        return null;
-      }catch(e){
+    
+    const RELOAD_CHECK_MIN_GAP_MS = 1500;
+
+    function pageGeneratedAt_() {
+      try { return String(document.body.getAttribute('data-generated-at') || '').trim(); }
+      catch (e) { return ''; }
+    }
+
+    function readStatusCache_() {
+      try {
+        const raw = localStorage.getItem(STATUS_CACHE_KEY);
+        if (!raw) return null;
+        const o = JSON.parse(raw);
+        if (!o || typeof o !== 'object') return null;
+        return {
+          updating: !!o.updating,
+          publishedAt: String(o.publishedAt || ''),
+          ts: Number(o.ts || 0)
+        };
+      } catch (e) {
         return null;
       }
     }
 
-    function saveSnapshot_(data){
-      try{
-        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ data, savedAt: Date.now() }));
-      }catch(e){}
+    function writeStatusCache_(updating, publishedAt) {
+      try {
+        localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({
+          updating: !!updating,
+          publishedAt: String(publishedAt || ''),
+          ts: Date.now()
+        }));
+      } catch (e) {}
     }
 
-    let lastSnapshotData = loadSnapshot_();
-
-    function pageGeneratedAt_(){
-      try { return String(document.body.getAttribute('data-generated-at') || '').trim(); } catch(e){ return ''; }
+    function saveScrollForReload_() {
+      try { sessionStorage.setItem('scrollY', String(window.scrollY || 0)); } catch (e) {}
     }
 
-    function saveScrollForReload_(){
-      try { sessionStorage.setItem('scrollY', String(window.scrollY || 0)); } catch(e){}
+    function restoreScrollOnLoad_() {
+      try {
+        const y = parseInt(sessionStorage.getItem('scrollY') || '0', 10);
+        if (!Number.isNaN(y)) window.scrollTo(0, y);
+        sessionStorage.removeItem('scrollY');
+      } catch (e) {}
     }
+    window.addEventListener('load', restoreScrollOnLoad_);
 
+    
     function setUpdatingUi_(isUpdating) {
-      if (!globalUpdatedEl) return;
-
-      
       window.__SCHEDULE_UPDATING__ = (isUpdating === true);
 
-      
-      if (isUpdating === null) {
-        if (globalUpdatedLabelEl) globalUpdatedLabelEl.textContent = '';
-        globalUpdatedEl.textContent = '—';
-        return;
-      }
+      if (!globalUpdatedEl) return;
 
       if (isUpdating) {
         if (globalUpdatedLabelEl) globalUpdatedLabelEl.textContent = '';
@@ -413,10 +429,19 @@
     }
 
     
-    function getViewData_(){
-      if (statusIsUpdating === false) return allData;
-      return lastSnapshotData || allData;
-    }
+    (function applyCachedUiOnLoad_() {
+      const c = readStatusCache_();
+      if (!c || !c.ts) return;
+      const age = Date.now() - c.ts;
+      const ttl = c.updating ? CACHE_TTL_UPDATING_MS : CACHE_TTL_NORMAL_MS;
+      if (age > ttl) return;
+
+      
+      setUpdatingUi_(c.updating);
+
+      
+      if (c.publishedAt) window.__SCHEDULE_EXPECTED_PUBLISHED_AT__ = c.publishedAt;
+    })();
 
     
     function pollStatusJsonpOnce_() {
@@ -444,17 +469,24 @@
       });
     }
 
-    let _statusPollInFlight = false;
-    let _lastUiUpdating = null;
-    let _lastRawState = null;
+    let _pollInFlight = false;
+    let _lastIsUpdating = null;
+    let _lastPublishedAt = '';
+    let _reloadCheckInFlight = false;
+    let _lastReloadCheckAt = 0;
 
-    async function tryReloadToPublished_(publishedAt){
-      if (reloadInFlight) return;
-      const want = String(publishedAt || '').trim();
-      if (!want) return;
+    async function checkAndReloadToPublished_(expectedPublishedAt) {
+      const expected = String(expectedPublishedAt || '').trim();
+      if (!expected) return;
 
-      reloadInFlight = true;
-      try{
+      if (_reloadCheckInFlight) return;
+
+      const now = Date.now();
+      if (now - _lastReloadCheckAt < RELOAD_CHECK_MIN_GAP_MS) return;
+      _lastReloadCheckAt = now;
+
+      _reloadCheckInFlight = true;
+      try {
         const base = window.location.href.split('?')[0];
         const url = base + '?v=' + Date.now();
 
@@ -462,82 +494,72 @@
         if (!res.ok) return;
 
         const txt = await res.text();
-        const needle = `data-generated-at="${want}"`;
-        const needle2 = `data-generated-at='${want}'`;
+        const needle1 = `data-generated-at="${expected}"`;
+        const needle2 = `data-generated-at='${expected}'`;
 
         
-        if (txt.includes(needle) || txt.includes(needle2)) {
+        if (txt.includes(needle1) || txt.includes(needle2)) {
           saveScrollForReload_();
           window.location.reload();
         }
-      } catch(e){
+      } catch (e) {
         
       } finally {
-        reloadInFlight = false;
+        _reloadCheckInFlight = false;
       }
     }
 
-    async function tickStatus_(){
-      if (_statusPollInFlight) return;
+    async function tickStatus_() {
+      if (_pollInFlight) return;
       if (document.visibilityState !== 'visible') return;
 
-      _statusPollInFlight = true;
-      try{
+      _pollInFlight = true;
+      try {
         const data = await pollStatusJsonpOnce_();
-
         const st = String(data && data.status || '').toLowerCase().trim();
-        const rawState = (st === 'updating') ? 'updating' : 'normal';
+        const rawUpdating = (st === 'updating');
 
         const publishedAt = String(data && data.publishedAt || '').trim();
-        statusPublishedAt = publishedAt;
-
         const pageGen = pageGeneratedAt_();
 
         
+        const publishPending = !!(publishedAt && pageGen && publishedAt !== pageGen);
+
+        window.__SCHEDULE_PENDING_PUBLISH__ = publishPending;
+        window.__SCHEDULE_EXPECTED_PUBLISHED_AT__ = publishedAt || '';
+
+        const isUpdating = rawUpdating || publishPending;
+
         
-        const needsReload = (rawState === 'normal' && publishedAt && publishedAt !== pageGen);
+        if (_lastIsUpdating !== isUpdating || _lastPublishedAt !== publishedAt) {
+          _lastIsUpdating = isUpdating;
+          _lastPublishedAt = publishedAt;
 
-        const uiUpdating = (rawState === 'updating') || needsReload;
-
-        
-        if (_lastRawState !== rawState || _lastUiUpdating !== uiUpdating) {
-          _lastRawState = rawState;
-          _lastUiUpdating = uiUpdating;
-
-          statusIsUpdating = uiUpdating;
-
-          if (statusIsUpdating) {
-            const snap = loadSnapshot_();
-            if (snap) lastSnapshotData = snap;
-          }
-
-          setUpdatingUi_(statusIsUpdating);
-          renderAll();
-        } else {
-          
-          statusIsUpdating = uiUpdating;
-          setUpdatingUi_(statusIsUpdating);
+          setUpdatingUi_(isUpdating);
+          writeStatusCache_(isUpdating, publishedAt);
         }
 
         
-        if (needsReload) {
-          tryReloadToPublished_(publishedAt);
+        if (publishPending) {
+          await checkAndReloadToPublished_(publishedAt);
         }
 
-      }catch(e){
-        
-      }finally{
-        _statusPollInFlight = false;
+      } finally {
+        _pollInFlight = false;
       }
     }
 
-    function startStatusPolling_(){
-      const POLL_MS = 1000; 
-      setUpdatingUi_(null); 
-      tickStatus_();
-      setInterval(tickStatus_, POLL_MS);
-    }
     
+    (function startPolling_() {
+      async function loopOnce_() {
+        try { await tickStatus_(); } catch (e) {}
+        const delay = (window.__SCHEDULE_PENDING_PUBLISH__ || window.__SCHEDULE_UPDATING__) ? POLL_FAST_MS : POLL_NORMAL_MS;
+        setTimeout(loopOnce_, delay);
+      }
+      loopOnce_(); 
+    })();
+
+     
 
     function safeFilePart_(s){
       return String(s || '')
@@ -724,16 +746,12 @@
     }
 
     function renderAll() {
-      setUpdatingUi_(statusIsUpdating);
-
-      const viewData = getViewData_();
-
       blocksEl.innerHTML = '';
 
-      const headers = Array.isArray(viewData.headers) ? viewData.headers : [];
-      const rows = Array.isArray(viewData.rows) ? viewData.rows : [];
+      const headers = Array.isArray(allData.headers) ? allData.headers : [];
+      const rows = Array.isArray(allData.rows) ? allData.rows : [];
 
-      const layout = computeLayout(viewData);
+      const layout = computeLayout(allData);
       globalColWidthsPx = layout.colWidthsPx;
       globalCardOuterWidthPx = layout.cardOuterWidthPx;
 
@@ -742,12 +760,6 @@
       renderBlocks(groupRows(rows), headers);
       applySearchFilter_();
       syncClearBtn_();
-
-      
-      if (statusIsUpdating === false) {
-        lastSnapshotData = allData;
-        saveSnapshot_(allData);
-      }
     }
 
     if (searchInput) {
@@ -772,12 +784,10 @@
     
     function filteredDataForPdf_() {
       const q = String(currentSearch || '').trim().toLowerCase();
-      const base = getViewData_();
+      const headers = Array.isArray(allData.headers) ? allData.headers : [];
+      const rows = Array.isArray(allData.rows) ? allData.rows : [];
 
-      const headers = Array.isArray(base.headers) ? base.headers : [];
-      const rows = Array.isArray(base.rows) ? base.rows : [];
-
-      if (!q) return base;
+      if (!q) return allData;
 
       const outRows = rows.filter(r => {
         const line = String(r.line || '').toLowerCase();
@@ -788,7 +798,7 @@
         return joined.includes(q);
       });
 
-      return { updatedAt: base.updatedAt || null, headers, rows: outRows };
+      return { updatedAt: allData.updatedAt || null, headers, rows: outRows };
     }
 
     function parseDataUriFormat_(dataUri){
@@ -976,72 +986,398 @@
     window.addEventListener('resize', renderAll);
 
     
-    startStatusPolling_();
+    if (_lastIsUpdating === null) {
+      
+      const c = readStatusCache_();
+      if (!c) setUpdatingUi_(false);
+    }
+
     renderAll();
   </script>
 
   
-  
-
-  
   <script>
-  (() => {
-    const CHECK_EVERY_MS = 10000;
+    document.addEventListener('DOMContentLoaded', () => {
+        (function(){
+          const STORAGE_KEY = 'crown_a11y_settings_v1';
 
-    
-    const u0 = new URL(window.location.href);
-    if (u0.searchParams.get('norefresh') === '1') return;
+          const fab = document.getElementById('a11yFab');
+          const panel = document.getElementById('a11yPanel');
+          const backdrop = document.getElementById('a11yBackdrop');
+          const closeBtn = document.getElementById('a11yClose');
+          const footerLink = document.getElementById('a11yFooterLink');
 
-    let current = document.body.getAttribute('data-generated-at') || '';
-    let inFlight = false;
+          const themeSel = document.getElementById('a11yTheme');
+          const scaleRange = document.getElementById('a11yScale');
+          const btnSmaller = document.getElementById('a11ySmaller');
+          const btnBigger = document.getElementById('a11yBigger');
+          const btnReset = document.getElementById('a11yReset');
 
-    function saveScroll() {
-      try { sessionStorage.setItem('scrollY', String(window.scrollY || 0)); } catch (e) {}
-    }
+          const customWrap = document.getElementById('a11yCustomColors');
+          const bgPick = document.getElementById('a11yBg');
+          const textPick = document.getElementById('a11yText');
+          const linkPick = document.getElementById('a11yLink');
 
-    function restoreScroll() {
-      try {
-        const y = parseInt(sessionStorage.getItem('scrollY') || '0', 10);
-        if (!Number.isNaN(y)) window.scrollTo(0, y);
-        sessionStorage.removeItem('scrollY');
-      } catch (e) {}
-    }
+          const underlineCb = document.getElementById('a11yUnderlineLinks');
+          const lineHeightCb = document.getElementById('a11yLineHeight');
+          const letterSpaceCb = document.getElementById('a11yLetterSpacing');
+          const readableFontCb = document.getElementById('a11yReadableFont');
+          const reduceMotionCb = document.getElementById('a11yReduceMotion');
 
-    window.addEventListener('load', restoreScroll);
+          const overridesStyle = document.getElementById('a11yOverridesStyle');
 
-    async function checkForUpdate() {
-      if (inFlight) return;
-      if (document.visibilityState !== 'visible') return;
+          if (!fab || !panel || !backdrop || !closeBtn || !themeSel || !scaleRange || !btnSmaller || !btnBigger || !btnReset || !customWrap || !bgPick || !textPick || !linkPick || !overridesStyle) {
+            return;
+          }
 
-      
-      if (window.__SCHEDULE_UPDATING__ === true) return;
+          const DEFAULT = {
+            theme: 'default',
+            scale: 1,
+            bg: '#ffffff',
+            text: '#111111',
+            link: '#2563eb',
+            underlineLinks: false,
+            increaseLineHeight: false,
+            increaseLetterSpacing: false,
+            readableFont: false,
+            reduceMotion: false
+          };
 
-      inFlight = true;
-      try {
-        const base = window.location.href.split('?')[0];
-        const url = base + '?v=' + Date.now();
+          function loadSettings(){
+            try{
+              const raw = localStorage.getItem(STORAGE_KEY);
+              if(!raw) return {...DEFAULT};
+              const parsed = JSON.parse(raw);
+              return { ...DEFAULT, ...parsed };
+            }catch(e){
+              return {...DEFAULT};
+            }
+          }
 
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) return;
+          function saveSettings(s){
+            try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }catch(e){}
+          }
 
-        const txt = await res.text();
-        const m = txt.match(/data-generated-at="([^"]+)"/);
-        const next = (m && m[1]) ? m[1] : '';
+          function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
 
-        if (next && next !== current) {
-          saveScroll();
-          window.location.reload();
-        }
-      } catch (e) {
-        
-      } finally {
-        inFlight = false;
-      }
-    }
+          function buildCss(s){
+            const scale = Number(s.scale || 1);
 
-    setInterval(checkForUpdate, CHECK_EVERY_MS);
-  })();
+            let css = `
+              :root{ --a11y-scale: ${scale}; }
+              body{ font-size: calc(16px * var(--a11y-scale)) !important; }
+              .info-text{ font-size: calc(20px * var(--a11y-scale)) !important; }
+              th{ font-size: calc(13.5px * var(--a11y-scale)) !important; }
+              td{ font-size: calc(13.5px * var(--a11y-scale)) !important; }
+              .line-title{ font-size: calc(20px * var(--a11y-scale)) !important; }
+              button{ font-size: calc(14px * var(--a11y-scale)) !important; }
+              .search{ font-size: calc(14px * var(--a11y-scale)) !important; }
+              .muted{ font-size: calc(12px * var(--a11y-scale)) !important; }
+            `;
+
+            if (scale > 1) {
+              css += `
+                th, td{
+                  white-space: normal !important;
+                  overflow-wrap: break-word !important;
+                  word-break: break-word !important;
+                }
+              `;
+            }
+
+            if(s.theme === 'high'){
+              css += `
+                body{ background:#ffffff !important; color:#000 !important; }
+                a{ color:#0000EE !important; }
+                .line-card{ background:#ffffff !important; border-color:#000 !important; }
+                .tbl-wrap{ background:#ffffff !important; }
+                th, td{ background:#ffffff !important; color:#000 !important; border-color:#000 !important; }
+                .line-title{ color:#000 !important; }
+                .info-text{ color:#000 !important; }
+              `;
+            } else if(s.theme === 'dark'){
+              css += `
+                body{ background:#0b1220 !important; color:#f8fafc !important; }
+                a{ color:#93c5fd !important; }
+                .info-text{ color:#f8fafc !important; }
+                .line-card{ background:#111827 !important; border-color:#334155 !important; }
+                .tbl-wrap{ background:#0b1220 !important; }
+                th{ background:#111827 !important; color:#f8fafc !important; border-color:#334155 !important; }
+                td{ background:#0b1220 !important; color:#f8fafc !important; border-color:#334155 !important; }
+                .line-title{ color:#f8fafc !important; }
+                .search{ background:#0b1220 !important; color:#f8fafc !important; border-color:#334155 !important; }
+              `;
+            } else if(s.theme === 'soft'){
+              css += `
+                body{ background:#f6f7fb !important; color:#111827 !important; }
+                a{ color:#1d4ed8 !important; }
+                .line-card{ border-color:#d1d5db !important; }
+                th{ background: rgba(255,255,255,0.85) !important; }
+                td{ background: rgba(255,255,255,0.95) !important; }
+                .info-text{ color:#111827 !important; }
+              `;
+            } else if(s.theme === 'custom'){
+              const bg = s.bg || '#ffffff';
+              const text = s.text || '#111111';
+              const link = s.link || '#2563eb';
+              css += `
+                body{ background:${bg} !important; color:${text} !important; }
+                a{ color:${link} !important; }
+                .line-title, th, td{ color:${text} !important; }
+                .info-text{ color:${text} !important; }
+              `;
+            }
+
+            if (s.underlineLinks) css += `a{ text-decoration: underline !important; }`;
+            if (s.increaseLineHeight) css += `body, p, li, td, th{ line-height: 1.8 !important; }`;
+            if (s.increaseLetterSpacing) css += `body, p, li, td, th{ letter-spacing: 0.04em !important; }`;
+            if (s.readableFont) css += `body, button, input, select, textarea{ font-family: Verdana, Arial, sans-serif !important; }`;
+            if (s.reduceMotion) css += `*{ transition: none !important; animation: none !important; scroll-behavior: auto !important; }`;
+
+            return css;
+          }
+
+          function apply(s){
+            overridesStyle.textContent = buildCss(s);
+            window.dispatchEvent(new Event('a11y:changed'));
+          }
+
+          function setUiFromSettings(s){
+            themeSel.value = s.theme;
+            scaleRange.value = String(s.scale);
+            bgPick.value = s.bg;
+            textPick.value = s.text;
+            linkPick.value = s.link;
+
+            customWrap.classList.toggle('open', s.theme === 'custom');
+
+            if (underlineCb) underlineCb.checked = !!s.underlineLinks;
+            if (lineHeightCb) lineHeightCb.checked = !!s.increaseLineHeight;
+            if (letterSpaceCb) letterSpaceCb.checked = !!s.increaseLetterSpacing;
+            if (readableFontCb) readableFontCb.checked = !!s.readableFont;
+            if (reduceMotionCb) reduceMotionCb.checked = !!s.reduceMotion;
+          }
+
+          function openPanel(){
+            document.body.classList.add('a11y-open');
+            panel.setAttribute('aria-hidden','false');
+            backdrop.setAttribute('aria-hidden','false');
+            setTimeout(() => themeSel.focus(), 0);
+          }
+
+          function closePanel(){
+            document.body.classList.remove('a11y-open');
+            panel.setAttribute('aria-hidden','true');
+            backdrop.setAttribute('aria-hidden','true');
+            setTimeout(() => fab.focus(), 0);
+          }
+
+          let settings = loadSettings();
+          apply(settings);
+          setUiFromSettings(settings);
+
+          fab.addEventListener('click', openPanel);
+          if (footerLink) footerLink.addEventListener('click', (e)=>{ e.preventDefault(); openPanel(); });
+
+          closeBtn.addEventListener('click', closePanel);
+          backdrop.addEventListener('click', closePanel);
+
+          document.addEventListener('keydown', (e)=>{
+            if(e.key === 'Escape' && document.body.classList.contains('a11y-open')) closePanel();
+          });
+
+          themeSel.addEventListener('change', ()=>{
+            settings.theme = themeSel.value;
+            customWrap.classList.toggle('open', settings.theme === 'custom');
+            saveSettings(settings);
+            apply(settings);
+          });
+
+          scaleRange.addEventListener('input', ()=>{
+            settings.scale = Number(scaleRange.value);
+            saveSettings(settings);
+            apply(settings);
+          });
+
+          btnSmaller.addEventListener('click', ()=>{
+            settings.scale = clamp((Number(settings.scale) || 1) - 0.1, 1, 1.6);
+            scaleRange.value = String(settings.scale);
+            saveSettings(settings);
+            apply(settings);
+          });
+
+          btnBigger.addEventListener('click', ()=>{
+            settings.scale = clamp((Number(settings.scale) || 1) + 0.1, 1, 1.6);
+            scaleRange.value = String(settings.scale);
+            saveSettings(settings);
+            apply(settings);
+          });
+
+          function customChanged(){
+            settings.bg = bgPick.value;
+            settings.text = textPick.value;
+            settings.link = linkPick.value;
+            saveSettings(settings);
+            apply(settings);
+          }
+
+          bgPick.addEventListener('input', customChanged);
+          textPick.addEventListener('input', customChanged);
+          linkPick.addEventListener('input', customChanged);
+
+          function updateToggles(){
+            if (underlineCb) settings.underlineLinks = underlineCb.checked;
+            if (lineHeightCb) settings.increaseLineHeight = lineHeightCb.checked;
+            if (letterSpaceCb) settings.increaseLetterSpacing = letterSpaceCb.checked;
+            if (readableFontCb) settings.readableFont = readableFontCb.checked;
+            if (reduceMotionCb) settings.reduceMotion = reduceMotionCb.checked;
+            saveSettings(settings);
+            apply(settings);
+          }
+
+          if (underlineCb) underlineCb.addEventListener('change', updateToggles);
+          if (lineHeightCb) lineHeightCb.addEventListener('change', updateToggles);
+          if (letterSpaceCb) letterSpaceCb.addEventListener('change', updateToggles);
+          if (readableFontCb) readableFontCb.addEventListener('change', updateToggles);
+          if (reduceMotionCb) reduceMotionCb.addEventListener('change', updateToggles);
+
+          btnReset.addEventListener('click', ()=>{
+            settings = {...DEFAULT};
+            try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+            apply(settings);
+            setUiFromSettings(settings);
+          });
+        })();
+      });
   </script>
+
+  
+
+  <button id="a11yFab" class="a11y-fab" type="button" aria-label="Accessibility options">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 6.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" fill="currentColor"/>
+      <path d="M4.5 8.5c0-.55.45-1 1-1h13c.55 0 1 .45 1 1s-.45 1-1 1H14v3.2l3.1 7.4c.22.5-.02 1.1-.52 1.32-.5.22-1.1-.02-1.32-.52L12.9 16h-1.8l-2.36 5.9c-.22.5-.82.74-1.32.52-.5-.22-.74-.82-.52-1.32L10 12.7V9.5H5.5c-.55 0-1-.45-1-1Z" fill="currentColor"/>
+    </svg>
+  </button>
+
+  <div id="a11yBackdrop" class="a11y-backdrop" aria-hidden="true"></div>
+
+  <aside id="a11yPanel" class="a11y-panel" role="dialog" aria-modal="true" aria-labelledby="a11yTitle"
+    aria-hidden="true">
+    <div class="a11y-panel__header">
+      <h2 id="a11yTitle" class="a11y-title">Accessibility</h2>
+      <button id="a11yClose" class="a11y-close" type="button" aria-label="Close accessibility panel">Close</button>
+    </div>
+
+    <div class="a11y-panel__content">
+      <div class="a11y-section">
+        <h3>Accessibility Statement</h3>
+        <p>
+          Crown Shipping Ltd. is committed to providing an accessible experience for all users, including people with
+          disabilities.
+          This page includes built-in accessibility controls that allow you to adjust text size and readability
+          preferences.
+        </p>
+
+        <h3 style="margin-top:10px;">Known Limitations</h3>
+        <ul>
+          <li>Some tables may require horizontal scrolling on small screens.</li>
+          <li>Data is displayed as received from the source spreadsheet and may contain abbreviations.</li>
+        </ul>
+
+        <h3 style="margin-top:10px;">Assistive Technology & Keyboard Support</h3>
+        <ul>
+          <li>Keyboard navigation is supported (Tab / Shift+Tab / Enter).</li>
+          <li>You can close this panel using the Escape (Esc) key.</li>
+          <li>Screen reader users: headings and controls are labeled for improved navigation.</li>
+        </ul>
+
+        <div class="a11y-contact">
+          <p style="margin:0 0 6px;">
+            If you encounter an accessibility issue, please contact us and we will do our best to address it.
+          </p>
+          <p style="margin:0;">
+            Email:
+            <a href="mailto:export@crown-shipping.co.il">export@crown-shipping.co.il</a><br/>
+            <strong>Statement updated:</strong> January 2026
+          </p>
+        </div>
+      </div>
+
+      <div class="a11y-section">
+        <h3>Accessibility Controls</h3>
+        <div class="a11y-controls">
+          <div class="a11y-row">
+            <label for="a11yTheme">Color / Contrast</label>
+            <select id="a11yTheme" class="a11y-select">
+              <option value="default">Default (Original)</option>
+              <option value="high">High Contrast</option>
+              <option value="dark">Dark Mode</option>
+              <option value="soft">Soft Contrast</option>
+              <option value="custom">Custom Colors</option>
+            </select>
+          </div>
+
+          <div id="a11yCustomColors" class="a11y-colors">
+            <div class="a11y-row">
+              <label for="a11yBg">Background</label>
+              <input id="a11yBg" type="color" value="#ffffff" />
+            </div>
+            <div class="a11y-row">
+              <label for="a11yText">Text</label>
+              <input id="a11yText" type="color" value="#111111" />
+            </div>
+            <div class="a11y-row">
+              <label for="a11yLink">Links</label>
+              <input id="a11yLink" type="color" value="#2563eb" />
+            </div>
+          </div>
+
+          <div class="a11y-row">
+            <label for="a11yScale">Text size</label>
+            <input id="a11yScale" class="a11y-range" type="range" min="1" max="1.6" step="0.05" value="1" />
+          </div>
+
+          <div class="a11y-row">
+            <label for="a11yUnderlineLinks">Underline links</label>
+            <input id="a11yUnderlineLinks" class="a11y-toggle" type="checkbox" />
+          </div>
+
+          <div class="a11y-row">
+            <label for="a11yLineHeight">Increase line spacing</label>
+            <input id="a11yLineHeight" class="a11y-toggle" type="checkbox" />
+          </div>
+
+          <div class="a11y-row">
+            <label for="a11yLetterSpacing">Increase letter spacing</label>
+            <input id="a11yLetterSpacing" class="a11y-toggle" type="checkbox" />
+          </div>
+
+          <div class="a11y-row">
+            <label for="a11yReadableFont">Readable font</label>
+            <input id="a11yReadableFont" class="a11y-toggle" type="checkbox" />
+          </div>
+
+          <div class="a11y-row">
+            <label for="a11yReduceMotion">Reduce motion</label>
+            <input id="a11yReduceMotion" class="a11y-toggle" type="checkbox" />
+          </div>
+
+          <div class="a11y-row" style="justify-content:flex-start; gap:8px;">
+            <button id="a11ySmaller" class="a11y-btn" type="button" aria-label="Decrease text size">A−</button>
+            <button id="a11yBigger" class="a11y-btn" type="button" aria-label="Increase text size">A+</button>
+            <button id="a11yReset" class="a11y-btn primary" type="button">Reset to original</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <footer class="page-footer">
+    Copyright © 2026 Crown Shipping Ltd. All rights reserved.
+    &nbsp;|&nbsp;
+    <a href="#" id="a11yFooterLink">Accessibility Statement</a>
+  </footer>
 
 </body>
 </html>
