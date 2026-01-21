@@ -305,7 +305,7 @@
   </style>
 </head>
 
-<body data-generated-at="21/01/2026 22:46:34">
+<body data-generated-at="21/01/2026 23:06:14">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -356,109 +356,100 @@
      
 
     
-    const STATUS_CACHE_KEY = 'crown_sched_status_cache_v2';
-    const CACHE_TTL_UPDATING_MS = 10 * 60 * 1000; 
+    const STATUS_CACHE_KEY = 'crown_sched_status_cache_v3';
+    const CACHE_TTL_UPDATING_MS = 10 * 60 * 1000;
     const CACHE_TTL_NORMAL_MS   = 2 * 60 * 1000;
 
-    
-    
-    
-    const POLL_NORMAL_MS = 1000;
-    const POLL_FAST_MS   = 800;
-
-    
+    const POLL_NORMAL_MS = 2000; 
+    const POLL_FAST_MS   = 900;  
     const RELOAD_CHECK_MIN_GAP_MS = 1500;
 
-    function pageGeneratedAt_() {
+    let _pollInFlight = false;
+    let _reloadCheckInFlight = false;
+    let _lastReloadCheckAt = 0;
+
+    let _lastUiUpdating = null;
+    let _lastPublishedAt = '';
+
+    function pageGeneratedAt_(){
       try { return String(document.body.getAttribute('data-generated-at') || '').trim(); }
-      catch (e) { return ''; }
+      catch(e){ return ''; }
     }
 
-    function readStatusCache_() {
-      try {
+    function readStatusCache_(){
+      try{
         const raw = localStorage.getItem(STATUS_CACHE_KEY);
-        if (!raw) return null;
+        if(!raw) return null;
         const o = JSON.parse(raw);
-        if (!o || typeof o !== 'object') return null;
-        return {
-          updating: !!o.updating,
-          publishedAt: String(o.publishedAt || ''),
-          ts: Number(o.ts || 0)
-        };
-      } catch (e) {
+        if(!o || typeof o !== 'object') return null;
+        return { updating: !!o.updating, publishedAt: String(o.publishedAt || ''), ts: Number(o.ts || 0) };
+      }catch(e){
         return null;
       }
     }
 
-    function writeStatusCache_(updating, publishedAt) {
-      try {
+    function writeStatusCache_(updating, publishedAt){
+      try{
         localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({
           updating: !!updating,
           publishedAt: String(publishedAt || ''),
           ts: Date.now()
         }));
-      } catch (e) {}
+      }catch(e){}
     }
 
-    function saveScrollForReload_() {
-      try { sessionStorage.setItem('scrollY', String(window.scrollY || 0)); } catch (e) {}
+    function saveScrollForReload_(){
+      try { sessionStorage.setItem('scrollY', String(window.scrollY || 0)); } catch(e){}
     }
 
-    function restoreScrollOnLoad_() {
-      try {
+    function restoreScrollOnLoad_(){
+      try{
         const y = parseInt(sessionStorage.getItem('scrollY') || '0', 10);
-        if (!Number.isNaN(y)) window.scrollTo(0, y);
+        if(!Number.isNaN(y)) window.scrollTo(0, y);
         sessionStorage.removeItem('scrollY');
-      } catch (e) {}
+      }catch(e){}
     }
     window.addEventListener('load', restoreScrollOnLoad_);
 
-    
-    function setUpdatingUi_(isUpdating) {
+    function setUpdatingUi_(isUpdating){
       window.__SCHEDULE_UPDATING__ = (isUpdating === true);
 
-      if (!globalUpdatedEl) return;
+      if(!globalUpdatedEl) return;
 
-      if (isUpdating) {
-        if (globalUpdatedLabelEl) globalUpdatedLabelEl.textContent = '';
+      if(isUpdating){
+        if(globalUpdatedLabelEl) globalUpdatedLabelEl.textContent = '';
         globalUpdatedEl.textContent = 'Please wait while we update the schedule...';
-      } else {
-        if (globalUpdatedLabelEl) globalUpdatedLabelEl.textContent = 'Last updated:';
+      }else{
+        if(globalUpdatedLabelEl) globalUpdatedLabelEl.textContent = 'Last updated:';
         globalUpdatedEl.textContent = (allData && allData.updatedAt) ? allData.updatedAt : '—';
       }
     }
 
     
-    (function applyCachedUiOnLoad_() {
+    (function applyCachedUi_(){
       const c = readStatusCache_();
-      if (!c || !c.ts) return;
+      if(!c || !c.ts) return;
+
       const age = Date.now() - c.ts;
       const ttl = c.updating ? CACHE_TTL_UPDATING_MS : CACHE_TTL_NORMAL_MS;
-      if (age > ttl) return;
+      if(age > ttl) return;
 
-      
       setUpdatingUi_(c.updating);
-
-      
-      if (c.publishedAt) window.__SCHEDULE_EXPECTED_PUBLISHED_AT__ = c.publishedAt;
     })();
 
     
-    function pollStatusJsonpOnce_() {
+    function pollStatusJsonpOnce_(){
       return new Promise((resolve) => {
         const base = String(STATUS_WEBAPP_URL || '').trim();
-        if (!base) return resolve(null);
+        if(!base) return resolve(null);
 
         const cbName = '__schedStatusCb_' + Math.random().toString(36).slice(2);
         const cleanup = (scriptEl) => {
-          try { delete window[cbName]; } catch (e) { window[cbName] = undefined; }
-          if (scriptEl && scriptEl.parentNode) scriptEl.parentNode.removeChild(scriptEl);
+          try { delete window[cbName]; } catch(e) { window[cbName] = undefined; }
+          if(scriptEl && scriptEl.parentNode) scriptEl.parentNode.removeChild(scriptEl);
         };
 
-        window[cbName] = (data) => {
-          cleanup(script);
-          resolve(data || null);
-        };
+        window[cbName] = (data) => { cleanup(script); resolve(data || null); };
 
         const script = document.createElement('script');
         const sep = base.includes('?') ? '&' : '?';
@@ -469,52 +460,41 @@
       });
     }
 
-    let _pollInFlight = false;
-    let _lastIsUpdating = null;
-    let _lastPublishedAt = '';
-    let _reloadCheckInFlight = false;
-    let _lastReloadCheckAt = 0;
-
-    async function checkAndReloadToPublished_(expectedPublishedAt) {
+    async function checkAndReloadToPublished_(expectedPublishedAt){
       const expected = String(expectedPublishedAt || '').trim();
-      if (!expected) return;
+      if(!expected) return;
 
-      if (_reloadCheckInFlight) return;
+      if(_reloadCheckInFlight) return;
 
       const now = Date.now();
-      if (now - _lastReloadCheckAt < RELOAD_CHECK_MIN_GAP_MS) return;
+      if(now - _lastReloadCheckAt < RELOAD_CHECK_MIN_GAP_MS) return;
       _lastReloadCheckAt = now;
 
       _reloadCheckInFlight = true;
-      try {
+      try{
         const base = window.location.href.split('?')[0];
         const url = base + '?v=' + Date.now();
-
         const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) return;
+        if(!res.ok) return;
 
         const txt = await res.text();
-        const needle1 = `data-generated-at="${expected}"`;
-        const needle2 = `data-generated-at='${expected}'`;
-
-        
-        if (txt.includes(needle1) || txt.includes(needle2)) {
+        if(txt.includes(`data-generated-at="${expected}"`) || txt.includes(`data-generated-at='${expected}'`)){
           saveScrollForReload_();
           window.location.reload();
         }
-      } catch (e) {
+      }catch(e){
         
-      } finally {
+      }finally{
         _reloadCheckInFlight = false;
       }
     }
 
-    async function tickStatus_() {
-      if (_pollInFlight) return;
-      if (document.visibilityState !== 'visible') return;
+    async function tickStatus_(){
+      if(_pollInFlight) return;
+      if(document.visibilityState !== 'visible') return;
 
       _pollInFlight = true;
-      try {
+      try{
         const data = await pollStatusJsonpOnce_();
         const st = String(data && data.status || '').toLowerCase().trim();
         const rawUpdating = (st === 'updating');
@@ -525,38 +505,40 @@
         
         const publishPending = !!(publishedAt && pageGen && publishedAt !== pageGen);
 
-        window.__SCHEDULE_PENDING_PUBLISH__ = publishPending;
-        window.__SCHEDULE_EXPECTED_PUBLISHED_AT__ = publishedAt || '';
-
-        const isUpdating = rawUpdating || publishPending;
+        const uiUpdating = rawUpdating || publishPending;
 
         
-        if (_lastIsUpdating !== isUpdating || _lastPublishedAt !== publishedAt) {
-          _lastIsUpdating = isUpdating;
+        if(uiUpdating !== _lastUiUpdating || publishedAt !== _lastPublishedAt){
+          _lastUiUpdating = uiUpdating;
           _lastPublishedAt = publishedAt;
 
-          setUpdatingUi_(isUpdating);
-          writeStatusCache_(isUpdating, publishedAt);
+          setUpdatingUi_(uiUpdating);
+          writeStatusCache_(uiUpdating, publishedAt);
         }
 
         
-        if (publishPending) {
+        if(publishPending){
           await checkAndReloadToPublished_(publishedAt);
         }
 
-      } finally {
+      }finally{
         _pollInFlight = false;
       }
     }
 
-    
-    (function startPolling_() {
-      async function loopOnce_() {
-        try { await tickStatus_(); } catch (e) {}
-        const delay = (window.__SCHEDULE_PENDING_PUBLISH__ || window.__SCHEDULE_UPDATING__) ? POLL_FAST_MS : POLL_NORMAL_MS;
-        setTimeout(loopOnce_, delay);
+    (function startPolling_(){
+      if(!String(STATUS_WEBAPP_URL || '').trim()){
+        
+        setUpdatingUi_(false);
+        return;
       }
-      loopOnce_(); 
+
+      async function loop_(){
+        try{ await tickStatus_(); }catch(e){}
+        const delay = (window.__SCHEDULE_UPDATING__ === true) ? POLL_FAST_MS : POLL_NORMAL_MS;
+        setTimeout(loop_, delay);
+      }
+      loop_(); 
     })();
 
      
@@ -781,7 +763,6 @@
       clearSearchBtn.style.display = 'none';
     }
 
-    
     function filteredDataForPdf_() {
       const q = String(currentSearch || '').trim().toLowerCase();
       const headers = Array.isArray(allData.headers) ? allData.headers : [];
@@ -812,9 +793,9 @@
     }
 
     function blockTitleColor_(idx){
-      if (idx === 1) return [209, 46, 102];   
-      if (idx === 2) return [46, 136, 209];   
-      return [209, 141, 46];                  
+      if (idx === 1) return [209, 46, 102];
+      if (idx === 2) return [46, 136, 209];
+      return [209, 141, 46];
     }
 
     function getImageNaturalSize_(dataUri){
@@ -843,24 +824,23 @@
       const pageW = doc.internal.pageSize.getWidth();
       const pageH = doc.internal.pageSize.getHeight();
 
-      const BAR_COLOR = [200, 9, 82]; 
+      const BAR_COLOR = [200, 9, 82];
       const MARGIN_L = 32;
       const MARGIN_R = 32;
       const MARGIN_B = 32;
       const BAR_H = 34;
-      const HEADER_H = 92; 
+      const HEADER_H = 92;
 
       const logoFmt = parseDataUriFormat_(LOGO_DATAURI);
       const logoData = LOGO_DATAURI && logoFmt ? LOGO_DATAURI : null;
 
-      
       let logoWpt = 0;
       let logoHpt = 0;
       if (logoData) {
         const sz = await getImageNaturalSize_(logoData);
         if (sz && sz.w && sz.h) {
-          const maxW = 240;  
-          const maxH = 44;   
+          const maxW = 240;
+          const maxH = 44;
           const scale = Math.min(maxW / sz.w, maxH / sz.h);
           logoWpt = sz.w * scale;
           logoHpt = sz.h * scale;
@@ -868,35 +848,29 @@
       }
 
       function drawHeader_(){
-        
         doc.setFillColor(BAR_COLOR[0], BAR_COLOR[1], BAR_COLOR[2]);
         doc.rect(0, 0, pageW, BAR_H, 'F');
 
-        
         doc.setTextColor(255, 255, 255);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(15);
         doc.text('Crown Shipping Live Schedule', pageW / 2, 22, { align: 'center' });
 
-        
         doc.setTextColor(17, 24, 39);
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
 
         const infoY = BAR_H + 22;
 
-        
         if (logoData && logoWpt > 0 && logoHpt > 0) {
           try {
             doc.addImage(logoData, logoFmt, MARGIN_L, BAR_H + 8, logoWpt, logoHpt, undefined, 'FAST');
           } catch (e) {}
         }
 
-        
         const lu = data.updatedAt || '—';
         doc.text(`Last updated: ${lu}`, pageW - MARGIN_R, infoY, { align: 'right' });
 
-        
         doc.setDrawColor(220, 220, 220);
         doc.setLineWidth(1);
         doc.line(MARGIN_L, HEADER_H, pageW - MARGIN_R, HEADER_H);
@@ -904,13 +878,10 @@
 
       drawHeader_();
 
-      
       const grouped = groupRows(rows);
       let blockIndex = 0;
-
       let y = HEADER_H + 18;
 
-      
       function ensureSpace_(needed){
         if (y + needed <= pageH - MARGIN_B) return;
         doc.addPage();
@@ -918,11 +889,9 @@
         y = HEADER_H + 18;
       }
 
-      
       for (const [line, items] of grouped.entries()) {
         blockIndex++;
 
-        
         ensureSpace_(22);
         const col = blockTitleColor_(blockIndex);
 
@@ -932,11 +901,9 @@
         doc.text(String(line || ''), MARGIN_L, y);
         y += 8;
 
-        
         const body = items.map(r => Array.isArray(r.cells) ? r.cells.map(x => (x === null || x === undefined) ? '' : String(x)) : []);
         const head = [headers.map(h => (h === null || h === undefined) ? '' : String(h))];
 
-        
         doc.autoTable({
           startY: y + 6,
           head,
@@ -967,10 +934,7 @@
               hookData.cell.styles.fontStyle = 'bold';
             }
           },
-          didDrawPage: function () {
-            
-            drawHeader_();
-          }
+          didDrawPage: function () { drawHeader_(); }
         });
 
         y = (doc.lastAutoTable && doc.lastAutoTable.finalY) ? (doc.lastAutoTable.finalY + 18) : (y + 18);
@@ -986,12 +950,7 @@
     window.addEventListener('resize', renderAll);
 
     
-    if (_lastIsUpdating === null) {
-      
-      const c = readStatusCache_();
-      if (!c) setUpdatingUi_(false);
-    }
-
+    
     renderAll();
   </script>
 
@@ -1250,8 +1209,6 @@
         })();
       });
   </script>
-
-  
 
   <button id="a11yFab" class="a11y-fab" type="button" aria-label="Accessibility options">
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
