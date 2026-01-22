@@ -1,9 +1,9 @@
 {
-  "busy": false,
-  "busySinceMs": null,
+  "busy": true,
+  "busySinceMs": 1769077538257,
   "liveGeneratedAt": "22/01/2026 12:24:48",
   "lastUpdatedText": "22/01/2026 12:24",
   "error": null,
-  "state": "0:22/01/2026 12:24:48",
-  "pushedAtIso": "2026-01-22T10:25:23.305Z"
+  "state": "1:22/01/2026 12:24:48",
+  "pushedAtIso": "2026-01-22T10:25:38.610Z"
 }
