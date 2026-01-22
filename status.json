@@ -1,5 +1,9 @@
 {
-  "mode": "normal",
-  "publishedAt": "21/01/2026 23:28:41",
-  "ts": "2026-01-21T21:28:43.731Z"
+  "busy": true,
+  "busySinceMs": 1769076181467,
+  "liveGeneratedAt": "22/01/2026 11:59:06",
+  "lastUpdatedText": "22/01/2026 11:59",
+  "error": null,
+  "state": "1:22/01/2026 11:59:06",
+  "pushedAtIso": "2026-01-22T10:23:48.581Z"
 }
