@@ -337,7 +337,7 @@
   </style>
 </head>
 
-<body data-generated-at="22/01/2026 11:05:02">
+<body data-generated-at="22/01/2026 11:18:03">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   
@@ -405,151 +405,159 @@
     }
 
     
-    let __liveState = '';
-    let __liveStableCount = 0;   
-    let __liveFailCount = 0;
-    let __liveTimer = null;
-    let __liveInFlight = false;
+let __liveState = '';
+let __liveTimer = null;
+let __liveInFlight = false;
+let __liveFailCount = 0;
 
-    const LIVE_FAST_MS   = 2000;   
-    const LIVE_STAGE1_MS = 3000;   
-    const LIVE_STAGE2_MS = 15000;  
-    const LIVE_STAGE3_MS = 60000;  
+const BUSY_POLL_MS   = 2000;    
+const WARMUP_POLL_MS = 15000;   
+const IDLE_POLL_MS   = 120000;  
+const WARMUP_WINDOW_MS = 60000; 
 
-    function nextNormalInterval_(){
-      if (__liveStableCount < 10) return LIVE_STAGE1_MS;   
-      if (__liveStableCount < 30) return LIVE_STAGE2_MS;   
-      return LIVE_STAGE3_MS;
-    }
+const __liveStartMs = Date.now();
 
-    function scheduleLive_(ms){
-      try { if (__liveTimer) clearTimeout(__liveTimer); } catch(e) {}
-      __liveTimer = setTimeout(liveCheckOnce_, Math.max(200, Number(ms || 0)));
-    }
+function scheduleLive_(ms){
+  try { if (__liveTimer) clearTimeout(__liveTimer); } catch(e) {}
+  __liveTimer = setTimeout(liveCheckOnce_, Math.max(250, Number(ms || 0)));
+}
 
-    function liveCheckOnce_(){
-      if (!STATUS_WEBAPP_URL) return;
-      if (__liveInFlight) return;
+function nextIdleInterval_(){
+  const age = Date.now() - __liveStartMs;
+  return (age < WARMUP_WINDOW_MS) ? WARMUP_POLL_MS : IDLE_POLL_MS;
+}
 
-      
-      if (document.visibilityState !== 'visible') {
-        scheduleLive_(LIVE_STAGE3_MS);
-        return;
-      }
+function canReloadTo_(gen){
+  
+  try{
+    const g = String(gen || '');
+    if (!g) return true;
+    const k = 'crown_reload_attempts_' + g;
+    const n = Number(sessionStorage.getItem(k) || '0') || 0;
+    if (n >= 2) return false;
+    sessionStorage.setItem(k, String(n + 1));
+    return true;
+  }catch(e){
+    return true;
+  }
+}
 
-      __liveInFlight = true;
-      let finished = false;
+function liveCheckOnce_(){
+  if (!STATUS_WEBAPP_URL) return;
+  if (__liveInFlight) return;
 
-      const cb = '__liveCb_' + Math.random().toString(36).slice(2);
-      const u = new URL(STATUS_WEBAPP_URL);
-      u.searchParams.set('callback', cb);
-      
-      if (__liveState) u.searchParams.set('state', __liveState);
-      u.searchParams.set('t', Date.now());
+  
+  if (document.visibilityState !== 'visible') {
+    scheduleLive_(IDLE_POLL_MS);
+    return;
+  }
 
-      const s = document.createElement('script');
-      s.src = u.toString();
-      s.async = true;
+  __liveInFlight = true;
+  let finished = false;
 
-      const timeoutMs = 12000;
-      const timeoutId = setTimeout(() => {
-        if (finished) return;
-        cleanup_();
-        __liveInFlight = false;
-        __liveFailCount++;
-        const backoff = Math.min(LIVE_STAGE3_MS, 2000 * Math.pow(2, Math.min(__liveFailCount, 5)));
-        scheduleLive_(backoff);
-      }, timeoutMs);
+  const cb = '__liveCb_' + Math.random().toString(36).slice(2);
+  const u = new URL(STATUS_WEBAPP_URL);
+  u.searchParams.set('callback', cb);
+  
+  if (__liveState) u.searchParams.set('state', __liveState);
+  u.searchParams.set('t', Date.now());
 
-      function cleanup_(){
-        finished = true;
-        try { clearTimeout(timeoutId); } catch(e) {}
-        try { delete window[cb]; } catch(e) {}
-        try { s.remove(); } catch(e) {}
-      }
+  const s = document.createElement('script');
+  s.src = u.toString();
+  s.async = true;
 
-      window[cb] = (data) => {
-        cleanup_();
-        __liveInFlight = false;
-        handleLiveStatus_(data);
-      };
+  const timeoutId = setTimeout(() => {
+    if (finished) return;
+    cleanup_();
+    __liveInFlight = false;
+    __liveFailCount++;
+    const backoff = Math.min(IDLE_POLL_MS, 2000 * Math.pow(2, Math.min(__liveFailCount, 5)));
+    scheduleLive_(backoff);
+  }, 12000);
 
-      s.onerror = () => {
-        cleanup_();
-        __liveInFlight = false;
-        __liveFailCount++;
-        const backoff = Math.min(LIVE_STAGE3_MS, 2000 * Math.pow(2, Math.min(__liveFailCount, 5)));
-        scheduleLive_(backoff);
-      };
+  function cleanup_(){
+    finished = true;
+    try { clearTimeout(timeoutId); } catch(e) {}
+    try { delete window[cb]; } catch(e) {}
+    try { s.remove(); } catch(e) {}
+  }
 
-      document.head.appendChild(s);
-    }
+  window[cb] = (data) => {
+    cleanup_();
+    __liveInFlight = false;
+    __liveFailCount = 0;
+    handleLiveStatus_(data);
+  };
 
-    function handleLiveStatus_(data){
-      if (!data) {
-        __liveFailCount++;
-        scheduleLive_(Math.min(LIVE_STAGE3_MS, 2000 * Math.pow(2, Math.min(__liveFailCount, 5))));
-        return;
-      }
+  s.onerror = () => {
+    cleanup_();
+    __liveInFlight = false;
+    __liveFailCount++;
+    const backoff = Math.min(IDLE_POLL_MS, 2000 * Math.pow(2, Math.min(__liveFailCount, 5)));
+    scheduleLive_(backoff);
+  };
 
-      __liveFailCount = 0;
-      __liveState = data.state || __liveState;
+  document.head.appendChild(s);
+}
 
-      const isBusy = !!data.busy;
-      const liveGen = String(data.liveGeneratedAt || '');
-      const currentGen = String(document.body.getAttribute('data-generated-at') || '');
+function handleLiveStatus_(data){
+  if (!data) {
+    scheduleLive_(nextIdleInterval_());
+    return;
+  }
 
-      if (isBusy) {
-        __liveStableCount = 0;
-        setBusyActive_(true);
-        scheduleLive_(LIVE_FAST_MS);
-        return;
-      }
+  __liveState = data.state || __liveState;
 
-      
-      if (liveGen && currentGen && liveGen !== currentGen) {
-        __liveStableCount = 0;
-        setBusyActive_(true);
-        const base = window.location.href.split('?')[0];
-        window.location.replace(base + '?v=' + encodeURIComponent(liveGen) + '&r=' + Date.now());
-        return;
-      }
+  const isBusy = !!data.busy;
+  const liveGen = String(data.liveGeneratedAt || '');
+  const currentGen = String(document.body.getAttribute('data-generated-at') || '');
 
+  if (isBusy) {
+    
+    setBusyActive_(true);
+    scheduleLive_(BUSY_POLL_MS);
+    return;
+  }
+
+  
+  if (liveGen && currentGen && liveGen !== currentGen) {
+    if (!canReloadTo_(liveGen)) {
       
       setBusyActive_(false);
-      if (data.lastUpdatedText && globalUpdatedEl) {
-        globalUpdatedEl.textContent = String(data.lastUpdatedText);
-      }
-
-      __liveStableCount++;
-      scheduleLive_(nextNormalInterval_());
+      if (data.lastUpdatedText && globalUpdatedEl) globalUpdatedEl.textContent = String(data.lastUpdatedText);
+      scheduleLive_(IDLE_POLL_MS);
+      return;
     }
 
-    function startLiveStatus_(){
-      if (!STATUS_WEBAPP_URL) return;
+    setBusyActive_(true);
+    const base = window.location.href.split('?')[0];
+    window.location.replace(base + '?v=' + encodeURIComponent(liveGen) + '&r=' + Date.now());
+    return;
+  }
 
-      
-      __liveStableCount = 0;
-      __liveFailCount = 0;
-      scheduleLive_(250);
+  
+  setBusyActive_(false);
+  if (data.lastUpdatedText && globalUpdatedEl) {
+    globalUpdatedEl.textContent = String(data.lastUpdatedText);
+  }
 
-      
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          __liveStableCount = 0;
-          __liveFailCount = 0;
-          scheduleLive_(250);
-        }
-      });
+  
+  scheduleLive_(nextIdleInterval_());
+}
 
-      window.addEventListener('focus', () => {
-        __liveStableCount = 0;
-        __liveFailCount = 0;
-        scheduleLive_(250);
-      });
-    }
+function startLiveStatus_(){
+  if (!STATUS_WEBAPP_URL) return;
 
-    
+  
+  scheduleLive_(300);
+
+  
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') scheduleLive_(300);
+  });
+  window.addEventListener('focus', () => scheduleLive_(300));
+}
+
 
     let allData = SCHEDULE_DATA || { updatedAt: null, headers: [], rows: [] };
     let globalColWidthsPx = [];
