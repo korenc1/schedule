@@ -308,7 +308,7 @@
   </style>
 </head>
 
-<body data-generated-at="07/05/2026 17:56:48">
+<body data-generated-at="07/05/2026 18:15:35">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -752,13 +752,17 @@ function rgbToCss_(rgb){
 
   async function downloadPdf_(){
     if (!window.jspdf || !window.jspdf.jsPDF) return;
+    if (!Array.isArray(allData.rows) || !allData.rows.length) {
+  alert('Schedule data is still loading. Please try again in a few seconds.');
+  return;
+}
 
     const data = filteredDataForPdf_();
     const headers = Array.isArray(data.headers) ? data.headers : [];
     const rows = Array.isArray(data.rows) ? data.rows : [];
 
-    const gen = document.body.getAttribute('data-generated-at') || '';
-    const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedule';
+    const gen = lastLoadedGeneratedAt || document.body.getAttribute('data-generated-at') || '';
+const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedule';
     const filename = `Crown_Schedule_${fileStamp}.pdf`;
 
     const { jsPDF } = window.jspdf;
@@ -911,13 +915,13 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-window.addEventListener('pageshow', () => {
-  loadFreshScheduleData_();
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    loadFreshScheduleData_();
+  }
 });
 
-setInterval(() => {
-  loadFreshScheduleData_();
-}, 5 * 60 * 1000);
+
 </script>
 
   
