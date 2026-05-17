@@ -15,6 +15,7 @@
   
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
   <style>
     body {
@@ -313,7 +314,7 @@
   </style>
 </head>
 
-<body data-generated-at="17/05/2026 12:11:08">
+<body data-generated-at="17/05/2026 12:18:37">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -749,150 +750,6 @@ function rgbToCss_(rgb){
   return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
 }
 
-
-function normalizePdfCellText_(value){
-  return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-function wrapPdfLongLineByChars_(line, maxChars){
-  const text = String(line ?? '');
-  const limit = Math.max(8, Number(maxChars || 28));
-
-  if (!text || text.length <= limit) return [text];
-
-  const words = text.split(/(\s+)/);
-  const out = [];
-  let current = '';
-
-  function pushLongWord_(word){
-    let rest = String(word || '');
-    while (rest.length > limit) {
-      out.push(rest.slice(0, limit));
-      rest = rest.slice(limit);
-    }
-    return rest;
-  }
-
-  for (const part of words) {
-    if (!part) continue;
-
-    if (/^\s+$/.test(part)) {
-      if (current && !current.endsWith(' ')) current += ' ';
-      continue;
-    }
-
-    const clean = part.trim();
-    if (!clean) continue;
-
-    if (!current) {
-      current = clean.length > limit ? pushLongWord_(clean) : clean;
-      continue;
-    }
-
-    if ((current + ' ' + clean).length <= limit) {
-      current += ' ' + clean;
-    } else {
-      out.push(current.trimEnd());
-      current = clean.length > limit ? pushLongWord_(clean) : clean;
-    }
-  }
-
-  if (current) out.push(current.trimEnd());
-  return out.length ? out : [''];
-}
-
-function wrapPdfRemarksText_(value){
-  return getPdfRemarksLines_(value).join('\n');
-}
-
-function getPdfRemarksLines_(value){
-  const text = normalizePdfCellText_(value);
-
-  
-  
-  const MAX_CHARS_PER_PDF_LINE = 22;
-
-  const lines = text
-    .split('\n')
-    .flatMap(line => wrapPdfLongLineByChars_(line, MAX_CHARS_PER_PDF_LINE));
-
-  return lines.length ? lines : [''];
-}
-
-
-  const PDF_HEBREW_FONT_NAME = 'NotoSansHebrew';
-  const PDF_HEBREW_FONT_REGULAR_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansHebrew/NotoSansHebrew-Regular.ttf';
-  const PDF_HEBREW_FONT_BOLD_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansHebrew/NotoSansHebrew-Bold.ttf';
-  let pdfHebrewFontBase64Cache_ = null;
-
-  function containsHebrew_(value){
-    return /[\u0590-\u05FF]/.test(String(value || ''));
-  }
-
-  function arrayBufferToBase64_(buffer){
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 0x8000;
-    let binary = '';
-
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize);
-      binary += String.fromCharCode.apply(null, chunk);
-    }
-
-    return btoa(binary);
-  }
-
-  async function fetchFontAsBase64_(url){
-    const resp = await fetch(url, { method: 'GET', cache: 'force-cache' });
-
-    if (!resp.ok) {
-      throw new Error('Could not load PDF Hebrew font: HTTP ' + resp.status);
-    }
-
-    return arrayBufferToBase64_(await resp.arrayBuffer());
-  }
-
-  async function ensurePdfHebrewFont_(doc){
-    try {
-      if (!pdfHebrewFontBase64Cache_) {
-        const [regular, bold] = await Promise.all([
-          fetchFontAsBase64_(PDF_HEBREW_FONT_REGULAR_URL),
-          fetchFontAsBase64_(PDF_HEBREW_FONT_BOLD_URL)
-        ]);
-
-        pdfHebrewFontBase64Cache_ = { regular, bold };
-      }
-
-      doc.addFileToVFS('NotoSansHebrew-Regular.ttf', pdfHebrewFontBase64Cache_.regular);
-      doc.addFont('NotoSansHebrew-Regular.ttf', PDF_HEBREW_FONT_NAME, 'normal');
-      doc.addFileToVFS('NotoSansHebrew-Bold.ttf', pdfHebrewFontBase64Cache_.bold);
-      doc.addFont('NotoSansHebrew-Bold.ttf', PDF_HEBREW_FONT_NAME, 'bold');
-
-      return true;
-    } catch (err) {
-      console.error('Could not load Hebrew PDF font:', err);
-      return false;
-    }
-  }
-
-  function setPdfRtl_(doc, enabled){
-    if (doc && typeof doc.setR2L === 'function') {
-      doc.setR2L(!!enabled);
-    }
-  }
-
-  function setPdfFontForText_(doc, text, style){
-    const fontStyle = style || 'normal';
-
-    if (containsHebrew_(text)) {
-      doc.setFont(PDF_HEBREW_FONT_NAME, fontStyle);
-      return PDF_HEBREW_FONT_NAME;
-    }
-
-    doc.setFont('helvetica', fontStyle);
-    return 'helvetica';
-  }
-
   function getImageNaturalSize_(dataUri){
     return new Promise((resolve) => {
       const img = new Image();
@@ -904,22 +761,41 @@ function getPdfRemarksLines_(value){
 
   async function downloadPdf_(){
     if (!window.jspdf || !window.jspdf.jsPDF) return;
+    if (!window.html2canvas) {
+      alert('PDF generator is still loading. Please try again in a few seconds.');
+      return;
+    }
     if (!Array.isArray(allData.rows) || !allData.rows.length) {
-  alert('Schedule data is still loading. Please try again in a few seconds.');
-  return;
-}
+      alert('Schedule data is still loading. Please try again in a few seconds.');
+      return;
+    }
 
     const data = filteredDataForPdf_();
-    const headers = Array.isArray(data.headers) ? data.headers : [];
-    const rows = Array.isArray(data.rows) ? data.rows : [];
-
     const gen = lastLoadedGeneratedAt || document.body.getAttribute('data-generated-at') || '';
-const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedule';
+    const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedule';
     const filename = `Crown_Schedule_${fileStamp}.pdf`;
+
+    
+    
+    
+    
+    applySearchFilter_();
+    syncClearBtn_();
+
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch (e) {}
+    }
+
+    const cards = Array.from(blocksEl.querySelectorAll('.line-card'))
+      .filter(card => card && card.offsetParent !== null && getComputedStyle(card).display !== 'none');
+
+    if (!cards.length) {
+      alert('No schedule rows to export.');
+      return;
+    }
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-    const hebrewFontReady = await ensurePdfHebrewFont_(doc);
 
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
@@ -930,6 +806,8 @@ const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedu
     const MARGIN_B = 32;
     const BAR_H = 34;
     const HEADER_H = 92;
+    const CONTENT_TOP = HEADER_H + 18;
+    const CONTENT_W = pageW - MARGIN_L - MARGIN_R;
 
     const logoFmt = parseDataUriFormat_(LOGO_DATAURI);
     const logoData = LOGO_DATAURI && logoFmt ? LOGO_DATAURI : null;
@@ -948,7 +826,6 @@ const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedu
     }
 
     function drawHeader_(){
-      setPdfRtl_(doc, false);
       doc.setFillColor(BAR_COLOR[0], BAR_COLOR[1], BAR_COLOR[2]);
       doc.rect(0, 0, pageW, BAR_H, 'F');
 
@@ -969,7 +846,7 @@ const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedu
         } catch (e) {}
       }
 
-      const lu = data.updatedAt || '-';
+      const lu = data.updatedAt || '—';
       doc.text(`Last updated: ${lu}`, pageW - MARGIN_R, infoY, { align: 'right' });
 
       doc.setDrawColor(220, 220, 220);
@@ -977,191 +854,91 @@ const fileStamp = safeFilePart_(gen) || safeFilePart_(data.updatedAt) || 'schedu
       doc.line(MARGIN_L, HEADER_H, pageW - MARGIN_R, HEADER_H);
     }
 
-    drawHeader_();
-
-    const grouped = groupRows(rows);
-    let blockIndex = 0;
-    let y = HEADER_H + 18;
-
-    function ensureSpace_(needed){
-      if (y + needed <= pageH - MARGIN_B) return;
+    function addPage_(){
       doc.addPage();
       drawHeader_();
-      y = HEADER_H + 18;
+      return CONTENT_TOP;
     }
 
-    for (const [line, group] of grouped.entries()) {
-  blockIndex++;
+    function sliceCanvas_(canvas, sourceY, sourceH){
+      const slice = document.createElement('canvas');
+      slice.width = canvas.width;
+      slice.height = sourceH;
 
-  const items = group && Array.isArray(group.items) ? group.items : [];
-  const blockUpdatedAt = group && group.updatedAt ? group.updatedAt : '-';
+      const ctx = slice.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, slice.width, slice.height);
+      ctx.drawImage(canvas, 0, sourceY, canvas.width, sourceH, 0, 0, canvas.width, sourceH);
 
-  ensureSpace_(22);
-  const col = blockTitleColorByLine_(line);
+      return slice;
+    }
 
-  const lineText = String(line || '');
-  const lineHasHebrew = hebrewFontReady && containsHebrew_(lineText);
+    async function captureCard_(card){
+      
+      await new Promise(resolve => requestAnimationFrame(resolve));
 
-  setPdfFontForText_(doc, lineText, 'bold');
-  doc.setFontSize(12);
-  doc.setTextColor(col[0], col[1], col[2]);
-
-  setPdfRtl_(doc, lineHasHebrew);
-  doc.text(lineText, lineHasHebrew ? pageW - MARGIN_R : MARGIN_L, y, lineHasHebrew ? { align: 'right' } : undefined);
-  setPdfRtl_(doc, false);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(107, 114, 128);
-  doc.text(`Last updated: ${blockUpdatedAt}`, pageW - MARGIN_R, y, { align: 'right' });
-
-  y += 8;
-
-  const remarksColumnIndexes = headers
-    .map((h, idx) => isRemarksLimitedHeader(h) ? idx : -1)
-    .filter(idx => idx >= 0);
-
-  const remarksColumnIndexSet = new Set(remarksColumnIndexes);
-
-  const body = items.map(r => getDisplayCells_(r).map((x) => {
-    const value = (x === null || x === undefined) ? '' : String(x);
-    return normalizePdfCellText_(value);
-  }));
-      const head = [headers.map(h => (h === null || h === undefined) ? '' : String(h))];
-
-      const pdfRemarkColumnStyles = {};
-      remarksColumnIndexes.forEach(idx => {
-        pdfRemarkColumnStyles[idx] = {
-          cellWidth: 120,
-          minCellWidth: 95,
-          fontSize: 8,
-          overflow: 'visible',
-          valign: 'top'
-        };
+      return window.html2canvas(card, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: -window.scrollY,
+        windowWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth, card.scrollWidth, card.offsetWidth),
+        windowHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, card.scrollHeight, card.offsetHeight)
       });
+    }
 
-      doc.autoTable({
-        startY: y + 6,
-        head,
-        body,
-        margin: { left: MARGIN_L, right: MARGIN_R, top: HEADER_H + 14, bottom: MARGIN_B },
-        pageBreak: 'auto',
-        rowPageBreak: 'auto',
-        styles: {
-          font: 'helvetica',
-          fontSize: 9,
-          cellPadding: 4,
-          valign: 'top',
-          overflow: 'linebreak',
-          lineColor: [0, 0, 0],
-          lineWidth: 0.2
-        },
-        headStyles: {
-          fillColor: [243, 244, 246],
-          textColor: [17, 24, 39],
-          fontStyle: 'bold'
-        },
-        bodyStyles: {
-          fillColor: [255, 255, 255],
-          textColor: [17, 24, 39]
-        },
-        columnStyles: pdfRemarkColumnStyles,
-        didParseCell: function (hookData) {
-          const raw = hookData.cell && hookData.cell.raw;
-          const rawText = String(raw || '');
-          const isBodyCell = hookData.section === 'body';
-          const isRemarksCell = isBodyCell && remarksColumnIndexSet.has(hookData.column.index);
+    function addCanvasToPdf_(canvas, y){
+      if (!canvas || !canvas.width || !canvas.height) return y;
 
-          if (isRemarksCell) {
-            const remarkLines = getPdfRemarksLines_(rawText);
+      const imgW = CONTENT_W;
+      const scaleToPdf = imgW / canvas.width;
+      let sourceY = 0;
 
-            
-            
-            hookData.cell.text = remarkLines;
-            hookData.cell._remarkLines = remarkLines;
-            hookData.cell.styles.overflow = 'visible';
-            hookData.cell.styles.valign = 'top';
-            hookData.cell.styles.cellPadding = 4;
-            hookData.cell.styles.fontSize = 8;
-            hookData.cell.styles.minCellHeight = Math.max(
-              Number(hookData.cell.styles.minCellHeight || 0),
-              remarkLines.length * 10 + 8
-            );
-          }
+      while (sourceY < canvas.height) {
+        let availablePt = (pageH - MARGIN_B) - y;
 
-          if (hebrewFontReady && containsHebrew_(rawText)) {
-            hookData.cell.styles.font = PDF_HEBREW_FONT_NAME;
-            hookData.cell.styles.halign = 'right';
-          } else {
-            hookData.cell.styles.font = 'helvetica';
-          }
-
-          if (rawText.trim().toUpperCase() === 'CLOSED') {
-            hookData.cell.styles.textColor = [220, 38, 38];
-            hookData.cell.styles.fontStyle = 'bold';
-          }
-        },
-        willDrawCell: function (hookData) {
-          const isBodyCell = hookData.section === 'body';
-          const isRemarksCell = isBodyCell && remarksColumnIndexSet.has(hookData.column.index);
-
-          if (isRemarksCell) {
-            
-            
-            hookData.cell.text = [];
-            setPdfRtl_(doc, false);
-            return;
-          }
-
-          const raw = hookData.cell && hookData.cell.raw;
-          const useRtl = hebrewFontReady && containsHebrew_(raw);
-          setPdfRtl_(doc, useRtl);
-        },
-        didDrawCell: function (hookData) {
-          const isBodyCell = hookData.section === 'body';
-          const isRemarksCell = isBodyCell && remarksColumnIndexSet.has(hookData.column.index);
-
-          if (isRemarksCell) {
-            const rawText = String((hookData.cell && hookData.cell.raw) || '');
-            const remarkLines = Array.isArray(hookData.cell._remarkLines)
-              ? hookData.cell._remarkLines
-              : getPdfRemarksLines_(rawText);
-
-            const hasHebrew = hebrewFontReady && containsHebrew_(rawText);
-            const pad = 4;
-            const fontSize = 8;
-            const lineHeight = 10;
-            const x = hasHebrew
-              ? hookData.cell.x + hookData.cell.width - pad
-              : hookData.cell.x + pad;
-            let yText = hookData.cell.y + pad + fontSize;
-
-            setPdfRtl_(doc, hasHebrew);
-            doc.setFont(hasHebrew ? PDF_HEBREW_FONT_NAME : 'helvetica', 'normal');
-            doc.setFontSize(fontSize);
-            doc.setTextColor(17, 24, 39);
-
-            remarkLines.forEach(line => {
-              doc.text(String(line || ''), x, yText, { align: hasHebrew ? 'right' : 'left' });
-              yText += lineHeight;
-            });
-          }
-
-          setPdfRtl_(doc, false);
-          doc.setFont('helvetica', 'normal');
-        },
-        didDrawPage: function () {
-          drawHeader_();
+        if (availablePt < 90) {
+          y = addPage_();
+          availablePt = (pageH - MARGIN_B) - y;
         }
-      });
 
-      y = (doc.lastAutoTable && doc.lastAutoTable.finalY) ? (doc.lastAutoTable.finalY + 18) : (y + 18);
+        const maxSourceH = Math.max(1, Math.floor(availablePt / scaleToPdf));
+        const sourceH = Math.min(canvas.height - sourceY, maxSourceH);
+        const slice = sliceCanvas_(canvas, sourceY, sourceH);
+        const imgH = sourceH * scaleToPdf;
+        const imgData = slice.toDataURL('image/png');
+
+        doc.addImage(imgData, 'PNG', MARGIN_L, y, imgW, imgH, undefined, 'FAST');
+
+        sourceY += sourceH;
+        y += imgH;
+
+        if (sourceY < canvas.height) {
+          y = addPage_();
+        }
+      }
+
+      return y + 12;
     }
 
-    setPdfRtl_(doc, false);
-    doc.save(filename);
-  }
+    drawHeader_();
+    let y = CONTENT_TOP;
 
+    try {
+      for (const card of cards) {
+        const canvas = await captureCard_(card);
+        y = addCanvasToPdf_(canvas, y);
+      }
+
+      doc.save(filename);
+    } catch (err) {
+      console.error('Could not create PDF from rendered schedule:', err);
+      alert('Could not create the PDF. Please refresh the page and try again.');
+    }
+  }
 
   if (pdfBtn) {
     pdfBtn.addEventListener('click', () => { downloadPdf_(); });
