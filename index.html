@@ -223,6 +223,19 @@
       text-align: start !important;
       line-height: 1.25;
     }
+
+     
+    body.pdf-capture-mode th,
+    body.pdf-capture-mode td {
+      font-size: 14.8px !important;
+      line-height: 1.28 !important;
+    }
+    body.pdf-capture-mode .line-title {
+      font-size: 22px !important;
+    }
+    body.pdf-capture-mode .line-title-date {
+      font-size: 18px !important;
+    }
     .align-left { text-align: left !important; }
     .closed-text { color: #dc2626 !important; font-weight: 800 !important; }
   </style>
@@ -315,7 +328,7 @@
   </style>
 </head>
 
-<body data-generated-at="17/05/2026 12:43:15">
+<body data-generated-at="17/05/2026 12:47:09">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -827,8 +840,8 @@ function rgbToCss_(rgb){
     const pageH = doc.internal.pageSize.getHeight();
 
     const BAR_COLOR = [200, 9, 82];
-    const MARGIN_L = 32;
-    const MARGIN_R = 32;
+    const MARGIN_L = 24;
+    const MARGIN_R = 24;
     const MARGIN_B = 32;
     const BAR_H = 34;
     const HEADER_H = 92;
@@ -1006,7 +1019,12 @@ function rgbToCss_(rgb){
     drawHeader_();
     let y = CONTENT_TOP;
 
+    document.body.classList.add('pdf-capture-mode');
+
     try {
+      
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
       for (const card of cards) {
         const canvas = await captureCard_(card);
         y = addCanvasToPdf_(canvas, y, card);
@@ -1016,6 +1034,8 @@ function rgbToCss_(rgb){
     } catch (err) {
       console.error('Could not create PDF from rendered schedule:', err);
       alert('Could not create the PDF. Please refresh the page and try again.');
+    } finally {
+      document.body.classList.remove('pdf-capture-mode');
     }
   }
 
