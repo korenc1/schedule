@@ -315,7 +315,7 @@
   </style>
 </head>
 
-<body data-generated-at="17/05/2026 12:32:28">
+<body data-generated-at="17/05/2026 12:38:26">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -916,11 +916,51 @@ function rgbToCss_(rgb){
       });
     }
 
-    function addCanvasToPdf_(canvas, y){
+    function getSafePdfCutPositions_(card, canvas){
+      if (!card || !canvas || !canvas.height) return [0, canvas ? canvas.height : 0];
+
+      const cardRect = card.getBoundingClientRect();
+      const ratioY = canvas.height / Math.max(1, cardRect.height || card.offsetHeight || 1);
+      const positions = [0, canvas.height];
+
+      
+      
+      const parts = card.querySelectorAll('.line-title, thead tr, tbody tr');
+      parts.forEach(el => {
+        const r = el.getBoundingClientRect();
+        const bottom = Math.round((r.bottom - cardRect.top) * ratioY);
+        if (bottom > 0 && bottom < canvas.height) positions.push(bottom);
+      });
+
+      return Array.from(new Set(positions))
+        .filter(n => Number.isFinite(n) && n >= 0 && n <= canvas.height)
+        .sort((a, b) => a - b);
+    }
+
+    function chooseSafeSourceHeight_(sourceY, maxSourceH, canvasHeight, cutPositions){
+      const remaining = canvasHeight - sourceY;
+      if (remaining <= maxSourceH) return remaining;
+
+      const target = sourceY + maxSourceH;
+      const candidates = (Array.isArray(cutPositions) ? cutPositions : [])
+        .filter(p => p > sourceY + 2 && p <= target);
+
+      if (candidates.length) {
+        return candidates[candidates.length - 1] - sourceY;
+      }
+
+      
+      
+      
+      return Math.min(remaining, maxSourceH);
+    }
+
+    function addCanvasToPdf_(canvas, y, card){
       if (!canvas || !canvas.width || !canvas.height) return y;
 
       const imgW = CONTENT_W;
       const scaleToPdf = imgW / canvas.width;
+      const cutPositions = getSafePdfCutPositions_(card, canvas);
       let sourceY = 0;
 
       while (sourceY < canvas.height) {
@@ -932,7 +972,20 @@ function rgbToCss_(rgb){
         }
 
         const maxSourceH = Math.max(1, Math.floor(availablePt / scaleToPdf));
-        const sourceH = Math.min(canvas.height - sourceY, maxSourceH);
+        let sourceH = chooseSafeSourceHeight_(sourceY, maxSourceH, canvas.height, cutPositions);
+
+        
+        
+        
+        const nextBoundary = cutPositions.find(p => p > sourceY + 2);
+        const wouldCutBeforeNextBoundary = nextBoundary && (sourceY + sourceH) < nextBoundary - 2;
+        if (wouldCutBeforeNextBoundary && y > CONTENT_TOP + 2) {
+          y = addPage_();
+          continue;
+        }
+
+        sourceH = Math.max(1, Math.min(sourceH, canvas.height - sourceY));
+
         const slice = sliceCanvas_(canvas, sourceY, sourceH);
         const imgH = sourceH * scaleToPdf;
         const imgData = slice.toDataURL('image/png');
@@ -956,7 +1009,7 @@ function rgbToCss_(rgb){
     try {
       for (const card of cards) {
         const canvas = await captureCard_(card);
-        y = addCanvasToPdf_(canvas, y);
+        y = addCanvasToPdf_(canvas, y, card);
       }
 
       doc.save(filename);
