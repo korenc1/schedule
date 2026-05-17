@@ -314,7 +314,7 @@
   </style>
 </head>
 
-<body data-generated-at="17/05/2026 12:23:29">
+<body data-generated-at="17/05/2026 12:27:39">
   <h1 class="page-title"><span>Crown Shipping Live Schedule</span></h1>
 
   <div id="topControls" class="top-controls">
@@ -392,8 +392,18 @@ function getDisplayCells_(row) {
     for (const r of rows) {
       const cells = getDisplayCells_(r);
       for (let i = 0; i < colCount; i++) {
+        const h = String(headers[i] ?? '').trim();
         const v = String(cells[i] ?? '').trim();
-        if (v.length > maxDataLen[i]) maxDataLen[i] = v.length;
+
+        
+        
+        
+        const parts = isRemarksLimitedHeader(h)
+          ? v.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
+          : [v];
+
+        const longestLineLen = parts.reduce((max, part) => Math.max(max, part.length), 0);
+        if (longestLineLen > maxDataLen[i]) maxDataLen[i] = longestLineLen;
       }
     }
 
